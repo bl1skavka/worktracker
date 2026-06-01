@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny Catch-all)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable core validation primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User settings schema validation (WHAT constraint)
+    function isValidUser(data) {
+      return data.uid is string && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && data.hourlyRate is number && data.hourlyRate >= 0
+        && data.currency is string && data.currency.size() <= 8
+        && data.standardShiftDuration is number && data.standardShiftDuration >= 0 && data.standardShiftDuration <= 24
+        && data.overtimeMultiplier is number && data.overtimeMultiplier >= 0 && data.overtimeMultiplier <= 10
+        && data.weeklyGoalHours is number && data.weeklyGoalHours >= 0 && data.weeklyGoalHours <= 168
+        && data.updatedAt is timestamp;
+    }
+
+    // Shift entry schema validation (WHAT constraint)
+    function isValidShift(data, userId) {
+      return data.id is string && isValidId(data.id)
+        && data.date is string && data.date.size() <= 32
+        && data.regularHours is number && data.regularHours >= 0 && data.regularHours <= 24
+        && data.overtimeHours is number && data.overtimeHours >= 0 && data.overtimeHours <= 24
+        && data.notes is string && data.notes.size() <= 500
+        && data.hourlyRate is number && data.hourlyRate >= 0
+        && data.overtimeMultiplier is number && data.overtimeMultiplier >= 0
+        && data.userId is string && data.userId == userId
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!('isOvernight' in data) || data.isOvernight is bool);
+    }
+
+    // Match rules for users collection (WHERE constraint)
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      
+      allow create: if isOwner(userId) 
+        && isValidUser(request.resource.data) 
+        && request.resource.data.keys().hasAll(['uid', 'email', 'hourlyRate', 'currency', 'standardShiftDuration', 'overtimeMultiplier', 'weeklyGoalHours', 'updatedAt'])
+        && request.resource.data.keys().size() == 8;
+
+      allow update: if isOwner(userId)
+        && isValidUser(request.resource.data)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hourlyRate', 'currency', 'standardShiftDuration', 'overtimeMultiplier', 'weeklyGoalHours', 'updatedAt']);
+
+      allow delete: if false; // Inactive / Deleted accounts are locked
+    }
+
+    // Match rules for shifts subcollection (WHERE constraint)
+    match /users/{userId}/shifts/{shiftId} {
+      allow list, get: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && isValidId(shiftId)
+        && isValidShift(request.resource.data, userId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.keys().hasAll(['id', 'date', 'regularHours', 'overtimeHours', 'notes', 'hourlyRate', 'overtimeMultiplier', 'userId', 'createdAt', 'updatedAt'])
+        && (request.resource.data.keys().size() == 10 || (request.resource.data.keys().size() == 11 && 'isOvernight' in request.resource.data));
+
+      allow update: if isOwner(userId)
+        && isValidId(shiftId)
+        && isValidShift(request.resource.data, userId)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['regularHours', 'overtimeHours', 'notes', 'hourlyRate', 'overtimeMultiplier', 'updatedAt', 'isOvernight']);
+
+      allow delete: if isOwner(userId) && isValidId(shiftId);
+    }
+  }
+}
