@@ -1,109 +1,89 @@
-{
-  "entities": {
-    "User": {
-      "title": "User Profile and Settings",
-      "description": "User preferences and workspace configurations",
-      "type": "object",
-      "properties": {
-        "uid": {
-          "type": "string",
-          "description": "Firebase Authentication User ID"
-        },
-        "email": {
-          "type": "string",
-          "description": "Email address of the user"
-        },
-        "hourlyRate": {
-          "type": "number",
-          "description": "Standard rate per hour of work"
-        },
-        "currency": {
-          "type": "string",
-          "description": "Currency symbol chosen by user"
-        },
-        "standardShiftDuration": {
-          "type": "number",
-          "description": "Standard shift length in hours"
-        },
-        "overtimeMultiplier": {
-          "type": "number",
-          "description": "Multiplier coefficient for overtime hours"
-        },
-        "weeklyGoalHours": {
-          "type": "number",
-          "description": "Target weekly work hours count"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Timestamp of the last update"
-        }
-      },
-      "required": ["uid", "email", "hourlyRate", "currency", "standardShiftDuration", "overtimeMultiplier", "weeklyGoalHours", "updatedAt"]
-    },
-    "Shift": {
-      "title": "Shift Entry",
-      "description": "A daily work entry including regular and overtime hours",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Document ID which is the exact date string (YYYY-MM-DD)"
-        },
-        "date": {
-          "type": "string",
-          "description": "Shift calendar date in YYYY-MM-DD format"
-        },
-        "regularHours": {
-          "type": "number",
-          "description": "Regular hours worked (standard rate)"
-        },
-        "overtimeHours": {
-          "type": "number",
-          "description": "Overtime/extra hours worked (multiplier rate)"
-        },
-        "notes": {
-          "type": "string",
-          "description": "Optional notes or details for the shift"
-        },
-        "hourlyRate": {
-          "type": "number",
-          "description": "Hourly rate active at the time of entry"
-        },
-        "overtimeMultiplier": {
-          "type": "number",
-          "description": "Overtime multiplier active at the time of entry"
-        },
-        "isOvernight": {
-          "type": "boolean",
-          "description": "Whether the shift spans from evening to next morning (overnight shift)"
-        },
-        "userId": {
-          "type": "string",
-          "description": "Owner userId of the shift"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Creation timestamp of the record"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Last update timestamp of the record"
-        }
-      },
-      "required": ["id", "date", "regularHours", "overtimeHours", "hourlyRate", "overtimeMultiplier", "userId", "createdAt", "updatedAt"]
-    }
-  },
-  "firestore": {
-    "users/{userId}": {
-      "schema": "User",
-      "description": "Config and settings details per user"
-    },
-    "users/{userId}/shifts/{shiftId}": {
-      "schema": "Shift",
-      "description": "Daily logged shifts for a specific user"
-    }
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+
+// Safely load the firebase-applet-config.json file if it exists.
+// We use import.meta.glob to dynamically check if the file exists without throwing a build-time compile error if it is missing (as when deployed via .gitignore).
+const configs = (import.meta as any).glob('../../firebase-applet-config.json', { eager: true });
+const configKeys = Object.keys(configs);
+const jsonConfig = configKeys.length > 0 ? (configs[configKeys[0]] as any).default : null;
+
+// Support standard Vite environment variable overrides for custom hosting deployments (like Vercel, Netlify, or custom servers)
+const metaEnv = (import.meta as any).env || {};
+const envConfig = {
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY,
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: metaEnv.VITE_FIREBASE_APP_ID,
+  firestoreDatabaseId: metaEnv.VITE_FIREBASE_DATABASE_ID
+};
+
+// Select final configuration
+const firebaseConfig = jsonConfig || (envConfig.apiKey ? envConfig : null) || {
+  // Safe dummy fallback to prevent the white screen of death on startup if no config is available.
+  apiKey: "dummy-api-key-for-local-fallback-build",
+  authDomain: "dummy-auth-domain.firebaseapp.com",
+  projectId: "dummy-project-id",
+  storageBucket: "dummy-project-id.appspot.com",
+  messagingSenderId: "1234567890",
+  appId: "1:1234567890:web:abcdef123456",
+  firestoreDatabaseId: "(default)"
+};
+
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)'); /* CRITICAL: The app will break without this line */
+export const auth = getAuth(app);
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
   }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
