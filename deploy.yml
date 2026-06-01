@@ -1,6 +1,5 @@
-{
-  "name": "Work Hours Tracker",
-  "description": "Мобильное приложение для учета рабочего времени и сверхурочных с подробной статистикой.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+name: Work Hours Tracker
+description: Мобильное приложение для учета рабочего времени и сверхурочных с подробной статистикой.
+requestFramePermissions: []
+majorCapabilities:
+  - MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API
